@@ -11,4 +11,3 @@ COPY app.js ./
 EXPOSE 7001
 
 CMD ["npm", "start"]
-`
