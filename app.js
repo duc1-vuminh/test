@@ -1,11 +1,17 @@
 const express = require("express");
 const fs = require("fs");
 const path = require("path");
+
 const app = express();
 const PORT = 7001;
 
 function loadConfig() {
-    const configPath = path.join(__dirname, "deploy", "profile.ini");
+    const dockerConfig = "/app/profile.ini";
+    const localConfig = path.join(__dirname, "deploy", "profile.ini");
+
+    const configPath = fs.existsSync(dockerConfig)
+        ? dockerConfig
+        : localConfig;
 
     const content = fs.readFileSync(configPath, "utf8");
 
@@ -21,10 +27,8 @@ function loadConfig() {
         const idx = l.indexOf("=");
 
         if (idx > 0) {
-            const key = l.substring(0, idx).trim();
-            const value = l.substring(idx + 1).trim();
-
-            config[key] = value;
+            config[l.substring(0, idx).trim()] =
+                l.substring(idx + 1).trim();
         }
     });
 

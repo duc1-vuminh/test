@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/bin/sh
 
 APP_NAME=healthcheck-app
 
@@ -10,19 +10,18 @@ docker rm $APP_NAME 2>/dev/null
 echo "Building image..."
 
 docker build \
-    -t $APP_NAME \
-    -f deploy/Dockerfile \
-    .
+  -t $APP_NAME \
+  -f Dockerfile \
+  ..
 
 echo "Starting container..."
 
 docker run -d \
-    --name $APP_NAME \
-    --restart always \
-    -p 7001:7001 \
-    -v $(pwd)/deploy/profile.ini:/app/profile.ini \
-    $APP_NAME
+  --name $APP_NAME \
+  --restart always \
+  -p 7001:7001 \
+  -v $(pwd)/profile.ini:/app/profile.ini \
+  $APP_NAME
 
-echo "Container started."
-
+echo "Done"
 docker ps | grep $APP_NAME
