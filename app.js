@@ -8,11 +8,13 @@ const {
     PutObjectCommand,
 } = require("@aws-sdk/client-s3");
 
+const {
+    STSClient,
+    GetCallerIdentityCommand,
+} = require("@aws-sdk/client-sts");
+
 const app = express();
 
-//
-// CONFIG
-//
 const PORT = 7001;
 
 const INSTANCE_ID =
@@ -31,9 +33,10 @@ const s3Client = new S3Client({
     region: AWS_REGION,
 });
 
-//
-// HELPERS
-//
+const stsClient = new STSClient({
+    region: AWS_REGION,
+});
+
 function getCurrentDate() {
     return new Date()
         .toISOString()
@@ -47,18 +50,11 @@ function ensureDirectory(directory) {
 }
 
 function sleep(ms) {
-    return new Promise((resolve) => {
-        setTimeout(resolve, ms);
-    });
+    return new Promise((resolve) =>
+        setTimeout(resolve, ms)
+    );
 }
 
-//
-// ======================================================
-// DATA PROVIDER
-//
-// THAY HÀM NÀY KHI APPLY APP THẬT
-// ======================================================
-//
 async function buildMockSnapshots() {
     const currentDate = getCurrentDate();
 
@@ -68,8 +64,6 @@ async function buildMockSnapshots() {
             content: {
                 source: "influxdb",
                 status: "hello world",
-                message:
-                    "Daily snapshot - InfluxDB metrics",
                 date: currentDate,
             },
         },
@@ -78,25 +72,17 @@ async function buildMockSnapshots() {
             content: {
                 source: "mariadb",
                 status: "hello world",
-                message:
-                    "Daily snapshot - MariaDB metrics",
                 date: currentDate,
             },
         },
     ];
 }
 
-//
-// ======================================================
-// SAVE FILES TO LOCAL QUEUE
-// ======================================================
-//
 function saveFilesToLocal(files) {
     ensureDirectory(SNAPSHOT_DIR);
 
-    const filePaths = [];
-
     for (const file of files) {
+
         const filePath = path.join(
             SNAPSHOT_DIR,
             file.fileName
@@ -108,25 +94,15 @@ function saveFilesToLocal(files) {
                 file.content,
                 null,
                 2
-            ),
-            "utf8"
+            )
         );
-
-        filePaths.push(filePath);
 
         console.log(
             `[QUEUE] ${file.fileName}`
         );
     }
-
-    return filePaths;
 }
 
-//
-// ======================================================
-// GENERIC RETRY
-// ======================================================
-//
 async function retry(
     action,
     retries = 3,
@@ -142,10 +118,12 @@ async function retry(
         try {
             return await action();
         } catch (err) {
+
             lastError = err;
 
             console.error(
-                `[RETRY ${attempt}/${retries}] ${err.message}`
+                `[RETRY ${attempt}/${retries}]`,
+                err.message
             );
 
             if (attempt < retries) {
@@ -157,23 +135,27 @@ async function retry(
     throw lastError;
 }
 
-//
-// ======================================================
-// S3 UPLOAD
-// ======================================================
-//
 async function uploadFile(
     filePath,
     s3Key
 ) {
+
+    const fileContent =
+        fs.readFileSync(filePath);
+
     await retry(async () => {
+
+        console.log({
+            bucket: S3_BUCKET,
+            region: AWS_REGION,
+            key: s3Key,
+        });
+
         await s3Client.send(
             new PutObjectCommand({
                 Bucket: S3_BUCKET,
                 Key: s3Key,
-                Body: fs.createReadStream(
-                    filePath
-                ),
+                Body: fileContent,
                 ContentType:
                     "application/json",
             })
@@ -181,14 +163,6 @@ async function uploadFile(
     });
 }
 
-//
-// ======================================================
-// PROCESS 1 FILE
-//
-// SUCCESS => DELETE
-// FAIL => KEEP
-// ======================================================
-//
 async function processFile(
     filePath
 ) {
@@ -199,6 +173,7 @@ async function processFile(
         `${INSTANCE_ID}/${getCurrentDate()}/live-shadow/${fileName}`;
 
     try {
+
         await uploadFile(
             filePath,
             s3Key
@@ -211,34 +186,35 @@ async function processFile(
         );
 
         return true;
+
     } catch (err) {
+
         console.error(
             `[FAILED] ${fileName}`
         );
 
-        console.error(err.message);
+        console.dir(err, {
+            depth: null,
+        });
 
-        //
-        // KHÔNG XOÁ FILE
-        //
         return false;
     }
 }
 
-//
-// ======================================================
-// UPLOAD ALL PENDING FILES
-// ======================================================
-//
 async function processPendingFiles() {
+
     if (!S3_BUCKET) {
+
         console.log(
             "Missing TESTNOMY_S3_BUCKET"
         );
+
         return;
     }
 
-    ensureDirectory(SNAPSHOT_DIR);
+    ensureDirectory(
+        SNAPSHOT_DIR
+    );
 
     const files =
         fs.readdirSync(
@@ -254,85 +230,114 @@ async function processPendingFiles() {
     );
 
     for (const fileName of files) {
-        const filePath = path.join(
-            SNAPSHOT_DIR,
-            fileName
-        );
 
         await processFile(
-            filePath
+            path.join(
+                SNAPSHOT_DIR,
+                fileName
+            )
         );
     }
 }
 
-//
-// ======================================================
-// PUBLIC SERVICE
-//
-// APP THẬT CHỈ CẦN DÙNG HÀM NÀY
-// ======================================================
-//
 async function uploadDataToS3(
-    dataProvider
+    provider
 ) {
     const files =
-        await dataProvider();
+        await provider();
 
     saveFilesToLocal(files);
 
     await processPendingFiles();
 }
 
-//
-// ======================================================
-// STARTUP RECOVERY
-// ======================================================
-//
-async function startupRecovery() {
-    console.log(
-        "Checking pending queue..."
-    );
-
-    await processPendingFiles();
-}
-
-//
-// ======================================================
-// HEALTHCHECK
-// ======================================================
-//
 app.get(
     "/healthcheck",
     (req, res) => {
-        res.status(200).json({
+
+        res.json({
             status: "UP",
             instanceId:
                 INSTANCE_ID,
             bucket:
                 S3_BUCKET,
+            region:
+                AWS_REGION,
         });
     }
 );
 
-//
-// ======================================================
-// TEST API
-//
-// SAU NÀY CÓ THỂ XOÁ
-// ======================================================
-//
-app.post(
-    "/test-upload",
+app.get(
+    "/whoami",
     async (req, res) => {
+
         try {
-            await uploadDataToS3(
-                buildMockSnapshots
+
+            const result =
+                await stsClient.send(
+                    new GetCallerIdentityCommand({})
+                );
+
+            res.json(result);
+
+        } catch (err) {
+
+            console.dir(err, {
+                depth: null,
+            });
+
+            res.status(500).json({
+                error:
+                    err.message,
+            });
+        }
+    }
+);
+
+app.get(
+    "/debug-s3",
+    async (req, res) => {
+
+        try {
+
+            console.log(
+                "======== DEBUG S3 ========"
+            );
+
+            console.log({
+                bucket:
+                    S3_BUCKET,
+                region:
+                    AWS_REGION,
+            });
+
+            await s3Client.send(
+                new PutObjectCommand({
+                    Bucket:
+                        S3_BUCKET,
+                    Key:
+                        "debug-test.txt",
+                    Body:
+                        "hello world",
+                    ContentType:
+                        "text/plain",
+                })
             );
 
             res.json({
-                success: true,
+                         success: true,
             });
+
         } catch (err) {
+
+            console.error(
+                "DEBUG S3 ERROR"
+            );
+
+            console.dir(err, {
+                depth: null,
+            });
+
             res.status(500).json({
                 success: false,
                 error:
@@ -342,15 +347,40 @@ app.post(
     }
 );
 
-//
-// ======================================================
-// START APP
-// ======================================================
-//
+app.post(
+    "/test-upload",
+    async (req, res) => {
+
+        try {
+
+            await uploadDataToS3(
+                buildMockSnapshots
+            );
+
+            res.json({
+                success: true,
+            });
+
+        } catch (err) {
+
+            console.dir(err, {
+                depth: null,
+            });
+
+            res.status(500).json({
+                success: false,
+                error:
+                    err.message,
+            });
+        }
+    }
+);
+
 app.listen(
     PORT,
     "0.0.0.0",
     async () => {
+
         console.log(
             `Listening on port ${PORT}`
         );
@@ -367,27 +397,15 @@ app.listen(
             `Region=${AWS_REGION}`
         );
 
-        await startupRecovery();
+        await processPendingFiles();
 
-        //
-        // Retry pending queue mỗi 5 phút
-        //
         setInterval(
-            async () => {
-                try {
-                    await processPendingFiles();
-                } catch (err) {
-                    console.error(err);
-                }
-            },
+            processPendingFiles,
             5 * 60 * 1000
         );
     }
 );
 
-//
-// EXPORT ĐỂ APP THẬT REUSE
-//
 module.exports = {
     uploadDataToS3,
 };
