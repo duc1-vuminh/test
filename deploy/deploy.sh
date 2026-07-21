@@ -49,7 +49,7 @@ docker run -d \
     -v /var/live-shadow:/tmp/live-shadow \
     -e TESTNOMY_INSTANCE_ID="$TESTNOMY_INSTANCE_ID" \
     -e TESTNOMY_S3_BUCKET="$TESTNOMY_S3_BUCKET" \
-    -e AWS_REGION="ap-southeast-1" \
+    -e TESTNOMY_REGION="$TESTNOMY_REGION" \
     $APP_NAME
 
 echo "Done."

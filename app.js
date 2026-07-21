@@ -24,7 +24,7 @@ const S3_BUCKET =
     process.env.TESTNOMY_S3_BUCKET || "";
 
 const AWS_REGION =
-    process.env.AWS_REGION || "ap-northeast-1";
+    process.env.TESTNOMY_REGION || "ap-northeast-1";
 
 const SNAPSHOT_DIR =
     path.join(os.tmpdir(), "live-shadow");
