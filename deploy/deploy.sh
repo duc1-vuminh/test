@@ -2,12 +2,18 @@
 
 APP_NAME=healthcheck-app
 
+# Load host environment
+if [ -f /etc/environment ]; then
+    set -a
+    source /etc/environment
+    set +a
+fi
+
 # Install Docker if missing
 if ! command -v docker >/dev/null 2>&1; then
     echo "Docker not found. Installing Docker..."
 
     apt-get update
-
     apt-get install -y docker.io
 
     systemctl enable docker
@@ -15,6 +21,11 @@ if ! command -v docker >/dev/null 2>&1; then
 
     echo "Docker installed."
 fi
+
+#
+# Persist snapshot queue
+#
+mkdir -p /var/live-shadow
 
 echo "Stopping old container..."
 
@@ -34,7 +45,11 @@ docker run -d \
     --name $APP_NAME \
     --restart always \
     -p 7001:7001 \
-    -v $(pwd)/profile.ini:/app/profile.ini \
+    -v $(pwd)/profile.ini:/app/profile.ini:ro \
+    -v /var/live-shadow:/tmp/live-shadow \
+    -e TESTNOMY_INSTANCE_ID="$TESTNOMY_INSTANCE_ID" \
+    -e TESTNOMY_S3_BUCKET="$TESTNOMY_S3_BUCKET" \
+    -e AWS_REGION="ap-southeast-1" \
     $APP_NAME
 
 echo "Done."
