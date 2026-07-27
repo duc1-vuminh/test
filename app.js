@@ -255,38 +255,38 @@ async function buildMockSnapshots() {
     ];
 }
 
-const cron = require("node-cron");
+// const cron = require("node-cron");
 
-cron.schedule(
-    "0 0 * * *",
-    async () => {
+// cron.schedule(
+//     "0 0 * * *",
+//     async () => {
 
-        console.log(
-            "[CRON] Daily upload started"
-        );
+//         console.log(
+//             "[CRON] Daily upload started"
+//         );
 
-        try {
+//         try {
 
-            const result =
-                await uploadDataToS3(
-                    buildMockSnapshots
-                );
+//             const result =
+//                 await uploadDataToS3(
+//                     buildMockSnapshots
+//                 );
 
-            console.log(result);
+//             console.log(result);
 
-        } catch (err) {
+//         } catch (err) {
 
-            console.error(
-                "[CRON] Failed"
-            );
+//             console.error(
+//                 "[CRON] Failed"
+//             );
 
-            console.error(err);
-        }
-    },
-    {
-        timezone: "Asia/Ho_Chi_Minh",
-    }
-);
+//             console.error(err);
+//         }
+//     },
+//     {
+//         timezone: "Asia/Ho_Chi_Minh",
+//     }
+// );
 
 async function saveFilesToLocal(files, snapshotsType) {
     const snapshotDir = snapshotsType === "daily" ? DAILY_SNAPSHOT_DIR : EXECUTION_SNAPSHOT_DIR;
