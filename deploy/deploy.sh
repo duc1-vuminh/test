@@ -47,6 +47,7 @@ docker run -d \
     -p 7001:7001 \
     -v $(pwd)/profile.ini:/app/profile.ini:ro \
     -v /var/live-shadow:/tmp/live-shadow \
+    -v /var/daily-snapshots:/tmp/daily-snapshots \
     -e TESTNOMY_INSTANCE_ID="$TESTNOMY_INSTANCE_ID" \
     -e TESTNOMY_S3_BUCKET="$TESTNOMY_S3_BUCKET" \
     -e TESTNOMY_REGION="$TESTNOMY_REGION" \

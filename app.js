@@ -13,6 +13,8 @@ const {
     GetCallerIdentityCommand,
 } = require("@aws-sdk/client-sts");
 
+const cron = require("node-cron");
+
 const app = express();
 
 const PORT = 7001;
@@ -26,8 +28,9 @@ const S3_BUCKET =
 const AWS_REGION =
     process.env.TESTNOMY_REGION || "ap-northeast-1";
 
-const SNAPSHOT_DIR =
-    path.join(os.tmpdir(), "live-shadow");
+const EXECUTION_SNAPSHOT_DIR = path.join(os.tmpdir(), "live-shadow");
+const DAILY_SNAPSHOT_DIR = path.join(os.tmpdir(), "daily-snapshots");
+const FAIL_SNAPSHOT_DIR = path.join(os.tmpdir(), "fail-file");
 
 const s3Client = new S3Client({
     region: AWS_REGION,
@@ -55,6 +58,180 @@ function sleep(ms) {
     );
 }
 
+
+function getYesterdayRange() {
+    const today = new Date();
+
+    today.setHours(
+        0,
+        0,
+        0,
+        0
+    );
+
+    const yesterday = new Date(today);
+
+    yesterday.setDate(
+        yesterday.getDate() - 1
+    );
+
+    return {
+        start: yesterday,
+        end: today
+    };
+}
+
+function getTodayRange() {
+    const start = new Date();
+
+    start.setHours(
+        0,
+        0,
+        0,
+        0
+    );
+
+    const end = new Date();
+
+    return {
+        start,
+        end
+    };
+}
+
+async function buildInfluxDBSnapshot(
+    influxDb,
+    start,
+    end
+) {
+    // const { start, end } =
+    //     getYesterdayRange();
+
+    const signalLogs =
+        await influxDb.query(
+            start,
+            end
+        );
+
+    if (
+        !signalLogs ||
+        signalLogs.length === 0
+    ) {
+        console.log(
+            "No InfluxDB data found. Skip snapshot."
+        );
+
+        return null;
+    }
+
+    const date =
+        start
+            .toISOString()
+            .split("T")[0];
+
+    return {
+        fileName:
+            `influxdb_${date}.json`,
+
+        content: {
+            signalLogs
+        }
+    };
+}
+
+async function buildMariaDBSnapshot(mariaDb, start, end) {
+    // const { start, end } =
+    //     getYesterdayRange();
+    const countResult =
+        await mariaDb.query(
+            `
+            SELECT COUNT(*) AS total
+            FROM scenarioRunGroup
+            WHERE finishTime >= ?
+            AND finishTime < ?
+            `,
+            [start, end]
+        );
+
+    const total =
+        countResult[0]?.total || 0;
+
+    if (total === 0) {
+        console.log(
+            "No data found. Skip snapshot."
+        );
+
+        return null;
+    }
+
+    const [
+        repositories,
+        tags,
+        suites,
+        scenarios,
+        scenarioRuns,
+        scenarioRunGroups
+    ] = await Promise.all([
+        mariaDb.query(
+            `SELECT * FROM repositories`
+        ),
+
+        mariaDb.query(
+            `SELECT * FROM tags`
+        ),
+
+        mariaDb.query(
+            `SELECT * FROM suites`
+        ),
+
+        mariaDb.query(
+            `SELECT * FROM scenarios`
+        ),
+
+        mariaDb.query(
+            `
+            SELECT *
+            FROM scenarioRuns
+            WHERE finishTime >= ?
+            AND finishTime < ?
+            ORDER BY finishTime
+            `,
+            [start, end]
+        ),
+
+        mariaDb.query(
+            `
+            SELECT *
+            FROM scenarioRunGroup
+            WHERE finishTime >= ?
+            AND finishTime < ?
+            ORDER BY finishTime
+            `,
+            [start, end]
+        )
+    ]);
+
+    const date =
+        start
+            .toISOString()
+            .split("T")[0];
+
+    return {
+        fileName:
+            `mariadb_${date}.json`,
+
+        content: {
+            repositories,
+            tags,
+            suites,
+            scenarios,
+            scenarioRuns,
+            scenarioRunGroups
+        }
+    };
+}
+
+
 async function buildMockSnapshots() {
     const currentDate = getCurrentDate();
 
@@ -78,16 +255,45 @@ async function buildMockSnapshots() {
     ];
 }
 
-function saveFilesToLocal(files) {
-    ensureDirectory(SNAPSHOT_DIR);
+const cron = require("node-cron");
 
-    for (const file of files) {
+cron.schedule(
+    "0 0 * * *",
+    async () => {
 
-        const filePath = path.join(
-            SNAPSHOT_DIR,
-            file.fileName
+        console.log(
+            "[CRON] Daily upload started"
         );
 
+        try {
+
+            const result =
+                await uploadDataToS3(
+                    buildMockSnapshots
+                );
+
+            console.log(result);
+
+        } catch (err) {
+
+            console.error(
+                "[CRON] Failed"
+            );
+
+            console.error(err);
+        }
+    },
+    {
+        timezone: "Asia/Ho_Chi_Minh",
+    }
+);
+
+async function saveFilesToLocal(files, snapshotsType) {
+    const snapshotDir = snapshotsType === "daily" ? DAILY_SNAPSHOT_DIR : EXECUTION_SNAPSHOT_DIR;
+    console.log(`Saving files to local directory: ${snapshotDir}`);
+    ensureDirectory(snapshotDir);
+    for (const file of files) {
+        const filePath = path.join(snapshotDir, file.fileName);
         fs.writeFileSync(
             filePath,
             JSON.stringify(
@@ -96,61 +302,30 @@ function saveFilesToLocal(files) {
                 2
             )
         );
-
-        console.log(
-            `[QUEUE] ${file.fileName}`
-        );
+        console.log(`[QUEUE] ${file.fileName}`);
     }
 }
 
-async function retry(
-    action,
-    retries = 3,
-    delayMs = 3000
-) {
+async function retry(action, retries = 3, delayMs = 3000) {
     let lastError;
-
-    for (
-        let attempt = 1;
-        attempt <= retries;
-        attempt++
-    ) {
+    for (let attempt = 1; attempt <= retries; attempt++) {
         try {
             return await action();
         } catch (err) {
-
             lastError = err;
-
-            console.error(
-                `[RETRY ${attempt}/${retries}]`,
-                err.message
-            );
-
+            console.error(`[RETRY ${attempt}/${retries}]`, err.message);
             if (attempt < retries) {
                 await sleep(delayMs);
             }
         }
     }
-
     throw lastError;
 }
 
-async function uploadFile(
-    filePath,
-    s3Key
-) {
-
-    const fileContent =
-        fs.readFileSync(filePath);
-
+async function uploadFile(filePath, s3Key) {
+    const fileContent = fs.readFileSync(filePath);
     await retry(async () => {
-
-        console.log({
-            bucket: S3_BUCKET,
-            region: AWS_REGION,
-            key: s3Key,
-        });
-
+        console.log({ bucket: S3_BUCKET, region: AWS_REGION, key: s3Key, });
         await s3Client.send(
             new PutObjectCommand({
                 Bucket: S3_BUCKET,
@@ -163,93 +338,102 @@ async function uploadFile(
     });
 }
 
-async function processFile(
-    filePath
-) {
-    const fileName =
-        path.basename(filePath);
-
-    const s3Key =
-        `${INSTANCE_ID}/${getCurrentDate()}/live-shadow/${fileName}`;
+async function processFile(filePath, snapshotsType) {
+    const fileName = path.basename(filePath);
+    const s3Key = `${INSTANCE_ID}/${getCurrentDate()}/${snapshotsType}/${fileName}`;
 
     try {
-
-        await uploadFile(
-            filePath,
-            s3Key
-        );
-
+        await uploadFile(filePath, s3Key);
         fs.unlinkSync(filePath);
-
-        console.log(
-            `[SUCCESS] ${fileName}`
-        );
-
+        console.log(`[SUCCESS] ${fileName}`);
         return true;
-
     } catch (err) {
+        console.error(`[FAILED] ${fileName}`);
+        console.dir(err, { depth: null });
 
-        console.error(
-            `[FAILED] ${fileName}`
-        );
+        try {
+            const failDir = FAIL_SNAPSHOT_DIR;
+            if (!fs.existsSync(failDir)) {
+                fs.mkdirSync(failDir, { recursive: true });
+            }
+            const failPath = path.join(failDir, fileName);
+            fs.renameSync(filePath, failPath);
 
-        console.dir(err, {
-            depth: null,
-        });
+            console.log(`[MOVED TO FAILFILE] ${failPath}`);
+        } catch (moveErr) {
+            console.error(`[MOVE FAILED] ${fileName}`, moveErr);
+        }
 
         return false;
     }
 }
 
-async function processPendingFiles() {
-
+async function processPendingFiles(snapshotsType) {
+    const snapshotDir = snapshotsType === "daily" ? DAILY_SNAPSHOT_DIR : EXECUTION_SNAPSHOT_DIR;
+    const result = { success: [], failed: [], };
     if (!S3_BUCKET) {
-
-        console.log(
-            "Missing TESTNOMY_S3_BUCKET"
-        );
-
-        return;
+        console.log("Missing TESTNOMY_S3_BUCKET");
+        result.failed.push("Missing TESTNOMY_S3_BUCKET");
+        return result;
     }
+    ensureDirectory(snapshotDir);
 
-    ensureDirectory(
-        SNAPSHOT_DIR
-    );
-
-    const files =
-        fs.readdirSync(
-            SNAPSHOT_DIR
-        );
-
+    const files = fs.readdirSync(snapshotDir);
     if (files.length === 0) {
-        return;
+        return result;
     }
-
-    console.log(
-        `Pending files: ${files.length}`
-    );
-
+    console.log(`Pending files: ${files.length}`);
     for (const fileName of files) {
-
-        await processFile(
-            path.join(
-                SNAPSHOT_DIR,
-                fileName
-            )
-        );
+        const filePath = path.join(snapshotDir, fileName);
+        const uploaded = await processFile(filePath, snapshotsType);
+        if (uploaded) {
+            result.success.push(fileName);
+        } else {
+            result.failed.push(fileName);
+        }
     }
+    return result;
 }
 
-async function uploadDataToS3(
-    provider
-) {
-    const files =
-        await provider();
-
-    saveFilesToLocal(files);
-
-    await processPendingFiles();
+async function uploadDataToS3(files, snapshotsType) {
+    saveFilesToLocal(files, snapshotsType);
+    const result = await processPendingFiles(snapshotsType);
+    return result;
 }
+
+app.post(
+    "/test-upload",
+    async (req, res) => {
+        try {
+            const files = await buildMockSnapshots();
+            const snapshotsType = req.query.snapshotsType || "daily";
+            const result = await uploadDataToS3(files, snapshotsType);
+            if (result.failed.length > 0) {
+                // If there are failed uploads 
+                return {
+                    success: false,
+                    uploaded:
+                        result.success,
+                    failed:
+                        result.failed,
+                };
+            }
+            return {
+                success: true,
+                uploaded:
+                    result.success,
+                failed: [],
+            };
+        } catch (err) {
+            console.dir(err, { depth: null, });
+            return {
+                success: false,
+                error:
+                    err.message,
+            };
+        }
+    }
+);
 
 app.get(
     "/healthcheck",
@@ -264,115 +448,6 @@ app.get(
             region:
                 AWS_REGION,
         });
-    }
-);
-
-app.get(
-    "/whoami",
-    async (req, res) => {
-
-        try {
-
-            const result =
-                await stsClient.send(
-                    new GetCallerIdentityCommand({})
-                );
-
-            res.json(result);
-
-        } catch (err) {
-
-            console.dir(err, {
-                depth: null,
-            });
-
-            res.status(500).json({
-                error:
-                    err.message,
-            });
-        }
-    }
-);
-
-app.get(
-    "/debug-s3",
-    async (req, res) => {
-
-        try {
-
-            console.log(
-                "======== DEBUG S3 ========"
-            );
-
-            console.log({
-                bucket:
-                    S3_BUCKET,
-                region:
-                    AWS_REGION,
-            });
-
-            await s3Client.send(
-                new PutObjectCommand({
-                    Bucket:
-                        S3_BUCKET,
-                    Key:
-                        "debug-test.txt",
-                    Body:
-                        "hello world",
-                    ContentType:
-                        "text/plain",
-                })
-            );
-
-            res.json({
-                         success: true,
-            });
-
-        } catch (err) {
-
-            console.error(
-                "DEBUG S3 ERROR"
-            );
-
-            console.dir(err, {
-                depth: null,
-            });
-
-            res.status(500).json({
-                success: false,
-                error:
-                    err.message,
-            });
-        }
-    }
-);
-
-app.post(
-    "/test-upload",
-    async (req, res) => {
-
-        try {
-
-            await uploadDataToS3(
-                buildMockSnapshots
-            );
-
-            res.json({
-                success: true,
-            });
-
-        } catch (err) {
-
-            console.dir(err, {
-                depth: null,
-            });
-
-            res.status(500).json({
-                success: false,
-                error:
-                    err.message,
-            });
-        }
     }
 );
 
