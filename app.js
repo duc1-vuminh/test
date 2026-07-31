@@ -289,7 +289,7 @@ async function buildMockSnapshots() {
 // );
 
 async function saveFilesToLocal(files, snapshotsType) {
-    const snapshotDir = snapshotsType === "daily" ? DAILY_SNAPSHOT_DIR : EXECUTION_SNAPSHOT_DIR;
+    const snapshotDir = snapshotsType === "daily-snapshots" ? DAILY_SNAPSHOT_DIR : EXECUTION_SNAPSHOT_DIR;
     console.log(`Saving files to local directory: ${snapshotDir}`);
     ensureDirectory(snapshotDir);
     for (const file of files) {
@@ -369,7 +369,7 @@ async function processFile(filePath, snapshotsType) {
 }
 
 async function processPendingFiles(snapshotsType) {
-    const snapshotDir = snapshotsType === "daily" ? DAILY_SNAPSHOT_DIR : EXECUTION_SNAPSHOT_DIR;
+    const snapshotDir = snapshotsType === "daily-snapshots" ? DAILY_SNAPSHOT_DIR : EXECUTION_SNAPSHOT_DIR;
     const result = { success: [], failed: [], };
     if (!S3_BUCKET) {
         console.log("Missing TESTNOMY_S3_BUCKET");
@@ -406,8 +406,9 @@ app.post(
     async (req, res) => {
         try {
             const files = await buildMockSnapshots();
-            const snapshotsType = req.query.snapshotsType || "daily";
+            const snapshotsType = req.query.snapshotsType || "daily-snapshots";
             const result = await uploadDataToS3(files, snapshotsType);
+            console.log("Upload result:", result);
             if (result.failed.length > 0) {
                 // If there are failed uploads 
                 return {
