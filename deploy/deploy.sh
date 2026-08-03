@@ -44,10 +44,12 @@ echo "Starting container..."
 docker run -d \
     --name $APP_NAME \
     --restart always \
-    -p 7001:7001 \
+    -p 3000:3000 \
     -v $(pwd)/profile.ini:/app/profile.ini:ro \
     -v /tmp/live-shadow:/tmp/live-shadow \
     -v /tmp/daily-snapshots:/tmp/daily-snapshots \
+    -v /tmp/fail-file:/tmp/fail-file \
+    -v /tmp/backup-system:/tmp/backup-system \
     -e TESTNOMY_INSTANCE_ID="$TESTNOMY_INSTANCE_ID" \
     -e TESTNOMY_S3_BUCKET="$TESTNOMY_S3_BUCKET" \
     -e TESTNOMY_REGION="$TESTNOMY_REGION" \
