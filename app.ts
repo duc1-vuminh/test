@@ -97,7 +97,11 @@ app.post("/backup/backup-before-stop", async (req, res) => {
     }
 });
 
-const PORT = process.env.PORT || 3000;
+app.get("/healthcheck", async (req, res) => {
+    return res.sendStatus(200);
+});
+
+const PORT = process.env.PORT || 7001;
 
 app.listen(PORT, () => {
     console.log(`Server started on port ${PORT}`);
