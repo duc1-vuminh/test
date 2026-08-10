@@ -44,7 +44,7 @@ echo "Starting container..."
 docker run -d \
     --name $APP_NAME \
     --restart always \
-    -p 3000:3000 \
+    -p 7001:7001 \
     -v $(pwd)/profile.ini:/app/profile.ini:ro \
     -v /tmp/live-shadow:/tmp/live-shadow \
     -v /tmp/daily-snapshots:/tmp/daily-snapshots \
