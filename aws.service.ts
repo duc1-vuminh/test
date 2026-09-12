@@ -258,7 +258,9 @@ export default class AwsService {
                     EXECUTION_SNAPSHOT_DIR,
                     file
                 );
-                fs.renameSync(srcPath, destPath);
+                //fs.renameSync(srcPath, destPath);
+                fs.copyFileSync(srcPath, destPath);
+                fs.unlinkSync(srcPath);
             } else {
                 hasDailySnapshots = true;
                 this.ensureDirectory(DAILY_SNAPSHOT_DIR);
@@ -266,7 +268,9 @@ export default class AwsService {
                     DAILY_SNAPSHOT_DIR,
                     file
                 );
-                fs.renameSync(srcPath, destPath);
+                //fs.renameSync(srcPath, destPath);
+                fs.copyFileSync(srcPath, destPath);
+                fs.unlinkSync(srcPath);
             }
         }
         if (hasExecutionSnapshots) {
